@@ -114,37 +114,7 @@ impl App {
     }
 
     fn prepare(&self) {
-        // Transition image layouts
-        self.command_buffer.begin(&self.device);
-
-        for image in self.swapchain.present_images() {
-            self.command_buffer.pipeline_barrier(
-                &self.device, 
-                *image,
-                (vk::ImageLayout::UNDEFINED, vk::ImageLayout::PRESENT_SRC_KHR),
-                (vk::AccessFlags::empty(), vk::AccessFlags::empty()),
-                (vk::PipelineStageFlags::TOP_OF_PIPE,  vk::PipelineStageFlags::TRANSFER),
-            );
-        }
-
-        self.command_buffer.end(&self.device);
-        self.command_buffer.submit_single_time(&self.device);
-
-        // Transition raytrace output image layout
-        self.command_buffer.begin(&self.device);
-
-        self.command_buffer.pipeline_barrier(
-            &self.device, 
-            self.raytrace_output_image.image(), 
-            (vk::ImageLayout::UNDEFINED, vk::ImageLayout::TRANSFER_SRC_OPTIMAL),
-            (vk::AccessFlags::empty(), vk::AccessFlags::empty()),
-            (vk::PipelineStageFlags::TOP_OF_PIPE,  vk::PipelineStageFlags::TRANSFER),
-        );
-
-        self.command_buffer.end(&self.device);
-        self.command_buffer.submit_single_time(&self.device);
-
-        // Upload model
+        // Load voxels to staging buffer
         let voxels = vec![
             (Vector3::new(0, 0, 0), 1),
             (Vector3::new(3, 0, 0), 1),
@@ -175,12 +145,40 @@ impl App {
             ).unwrap()
         };
 
-        unsafe { memcpy(bytes.as_ptr(), memory.cast(), size_of::<Scene>()) };
+        unsafe { 
+            memcpy(bytes.as_ptr(), memory.cast(), size_of::<Scene>());
+            self.device.unmap_memory(staging_buffer.memory());
+        };
 
-        unsafe { self.device.unmap_memory(staging_buffer.memory()) };
-
+        // Transition image layouts
         self.command_buffer.begin(&self.device);
-        self.command_buffer.copy_buffer(&self.device, staging_buffer.buffer(), self.world_buffer.buffer(), size_of::<Scene>() as u64);
+
+        for image in self.swapchain.present_images() {
+            self.command_buffer.pipeline_barrier(
+                &self.device, 
+                *image,
+                (vk::ImageLayout::UNDEFINED, vk::ImageLayout::PRESENT_SRC_KHR),
+                (vk::AccessFlags::empty(), vk::AccessFlags::empty()),
+                (vk::PipelineStageFlags::TOP_OF_PIPE,  vk::PipelineStageFlags::TOP_OF_PIPE),
+            );
+        }
+
+        // Transition raytrace output image layout
+        self.command_buffer.pipeline_barrier(
+            &self.device, 
+            self.raytrace_output_image.image(), 
+            (vk::ImageLayout::UNDEFINED, vk::ImageLayout::TRANSFER_SRC_OPTIMAL),
+            (vk::AccessFlags::empty(), vk::AccessFlags::empty()),
+            (vk::PipelineStageFlags::TOP_OF_PIPE,  vk::PipelineStageFlags::TOP_OF_PIPE),
+        );
+
+        self.command_buffer.copy_buffer(
+            &self.device, 
+            staging_buffer.buffer(), 
+            self.world_buffer.buffer(), 
+            size_of::<Scene>() as u64
+        );
+
         self.command_buffer.end(&self.device);
         self.command_buffer.submit_single_time(&self.device);
 

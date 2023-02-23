@@ -50,7 +50,7 @@ impl CommandBuffer{
         unsafe { device.end_command_buffer(self.buffer).unwrap() }
     }
 
-    pub fn reset(&self, device: &Device) {
+    pub fn _reset(&self, device: &Device) {
         unsafe { device.reset_command_buffer(self.buffer, vk::CommandBufferResetFlags::empty()).unwrap() }
     }
 
