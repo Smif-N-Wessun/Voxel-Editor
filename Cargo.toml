@@ -1,0 +1,21 @@
+[package]
+name = "voxel_editor"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+# Enable a small amount of optimization in debug mode
+[profile.dev]
+opt-level = 1
+
+# Enable high optimizations for dependencies
+[profile.dev.package."*"]
+opt-level = 3
+
+[dependencies]
+winit = "0.27"
+ash = {version = "0.37", features = ["linked", "debug"]}
+ash-window = "0.11"
+anyhow = "1.0"
+nalgebra = "0.31"
