@@ -218,18 +218,18 @@ impl App {
             (self.swapchain.present_images()[image_index as usize],  vk::ImageLayout::TRANSFER_DST_OPTIMAL),
             vk::Extent3D { width: self.window.inner_size().width, height: self.window.inner_size().height, depth: 1 },
         );
-        panic!("Stop here");
-        //self.command_buffer.pipeline_barrier(
-        //    &self.device, 
-        //    self.swapchain.present_images()[image_index as usize], 
-        //    (vk::ImageLayout::PRESENT_SRC_KHR, vk::ImageLayout::TRANSFER_DST_OPTIMAL),
-        //    (vk::AccessFlags::TRANSFER_READ, vk::AccessFlags::TRANSFER_WRITE),
-        //    (vk::PipelineStageFlags::TRANSFER,  vk::PipelineStageFlags::TRANSFER),
-        //);
-        //self.command_buffer.end(&self.device);
-        //self.command_buffer.submit_commands(&self.device, self.semaphore.image_available(), self.semaphore.render_complete());
+        self.command_buffer.pipeline_barrier(
+            &self.device, 
+            self.swapchain.present_images()[image_index as usize], 
+            (vk::ImageLayout::TRANSFER_DST_OPTIMAL, vk::ImageLayout::PRESENT_SRC_KHR),
+            (vk::AccessFlags::TRANSFER_WRITE, vk::AccessFlags::TRANSFER_READ),
+            (vk::PipelineStageFlags::TRANSFER,  vk::PipelineStageFlags::TRANSFER),
+        );
+        self.command_buffer.end(&self.device);
+        self.command_buffer.submit_commands(&self.device, self.semaphore.image_available(), self.semaphore.render_complete());
 
         self.swapchain.present_frame(&self.device, image_index, self.semaphore.render_complete());
+        panic!("Stop here");
     }
 
     pub fn run(mut self) {
