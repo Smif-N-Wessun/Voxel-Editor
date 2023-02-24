@@ -227,7 +227,6 @@ impl App {
         self.command_buffer.submit_commands(&self.device, self.semaphore.image_available(), self.semaphore.render_complete());
 
         self.swapchain.present_frame(&self.device, image_index, self.semaphore.render_complete());
-        panic!("Stop here");
     }
 
     pub fn run(mut self) {

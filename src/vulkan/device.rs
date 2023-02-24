@@ -40,13 +40,18 @@ impl Device {
         let device = unsafe { 
             let device_extension_names = vec![ash::extensions::khr::Swapchain::name().as_ptr()];
 
+            let mut required_physical_device_features_descriptor_indexing = vk::PhysicalDeviceDescriptorIndexingFeatures::builder()
+                .descriptor_binding_storage_image_update_after_bind(true)
+                .descriptor_binding_storage_buffer_update_after_bind(true);
+
             let create_info = vk::DeviceQueueCreateInfo::builder()
                 .queue_family_index(queue_family_index)
                 .queue_priorities(&[1.0]);
     
             let create_info = vk::DeviceCreateInfo::builder()
                 .queue_create_infos(slice::from_ref(&create_info))
-                .enabled_extension_names(&device_extension_names);
+                .enabled_extension_names(&device_extension_names)
+                .push_next(&mut required_physical_device_features_descriptor_indexing);
 
             instance.create_device(physical_device, &create_info, None).expect("Device creation error") 
         };

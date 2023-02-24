@@ -27,6 +27,7 @@ impl DescriptorSet {
             ];
 
             let create_info = vk::DescriptorPoolCreateInfo::builder()
+                .flags(vk::DescriptorPoolCreateFlags::FREE_DESCRIPTOR_SET | vk::DescriptorPoolCreateFlags::UPDATE_AFTER_BIND)
                 .pool_sizes(pool_sizes)
                 .max_sets(1);
 
@@ -52,8 +53,18 @@ impl DescriptorSet {
                 world_buffer,
                 raytrace_output_image,
             ];
+
+            let descriptor_binding_flags = {
+                let flags = vk::DescriptorBindingFlags::UPDATE_AFTER_BIND;
+                vec![flags; layout_bindings.len()]
+            };
+
+            let mut layout_binding_flags_create_info = vk::DescriptorSetLayoutBindingFlagsCreateInfo::builder()
+                .binding_flags(&descriptor_binding_flags[..]);
     
             let layout_create_info = vk::DescriptorSetLayoutCreateInfo::builder()
+                .push_next(&mut layout_binding_flags_create_info)
+                .flags(vk::DescriptorSetLayoutCreateFlags::UPDATE_AFTER_BIND_POOL)
                 .bindings(layout_bindings);
 
             device.create_descriptor_set_layout(&layout_create_info, None).expect("Descriptor set layout creation error")
