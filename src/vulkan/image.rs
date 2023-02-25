@@ -113,7 +113,7 @@ impl Image {
         self.image
     }
 
-    pub fn view(&self) -> vk::ImageView {
+    pub fn _view(&self) -> vk::ImageView {
         self.view
     }
 }

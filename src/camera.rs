@@ -1,10 +1,9 @@
-#![allow(dead_code)]
-
 use nalgebra::{
     Vector3, 
     Vector4
 };
 
+#[allow(dead_code)]
 #[repr(C)]
 pub struct Camera {
     pub origin: Vector4<f32>,
@@ -41,5 +40,5 @@ impl Camera {
             horizontal,
             vertical,
         }
-}
+    }
 }

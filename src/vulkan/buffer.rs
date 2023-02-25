@@ -11,7 +11,66 @@ pub struct Buffer {
 }
 
 impl Buffer {
-    pub fn new(instance: &ash::Instance, device: &Device, descriptor_set: &DescriptorSet, memory_flags: vk::MemoryPropertyFlags, size: u64) -> Self {
+    pub fn new_local(instance: &ash::Instance, device: &Device, descriptor_set: &DescriptorSet, size: u64) -> Self {
+        let (buffer, memory) = Buffer::new_buffer(
+            instance,
+            device, 
+            vk::MemoryPropertyFlags::DEVICE_LOCAL, 
+            size
+        );
+
+        unsafe {
+            let buffer_info = vk::DescriptorBufferInfo::builder()
+                .buffer(buffer)
+                .offset(0)
+                .range(size as vk::DeviceSize);
+    
+            let write_descriptor_set = vk::WriteDescriptorSet::builder()
+                .dst_set(descriptor_set.set())
+                .dst_binding(0)
+                .dst_array_element(0)
+                .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
+                .buffer_info(slice::from_ref(&buffer_info));
+    
+            device.update_descriptor_sets(slice::from_ref(&write_descriptor_set), &[] as &[vk::CopyDescriptorSet]);
+        }
+
+        Self { 
+            buffer, 
+            memory, 
+        }
+    }
+
+    pub fn new_staging(instance: &ash::Instance, device: &Device, size: u64) -> Self {
+        let (buffer, memory) = Buffer::new_buffer(
+            instance, 
+            device, 
+            vk::MemoryPropertyFlags::HOST_COHERENT | vk::MemoryPropertyFlags::HOST_VISIBLE, 
+            size
+        );
+
+        Self { 
+            buffer, 
+            memory, 
+        }
+    }
+
+    pub fn destroy_buffer(&self, device: &Device) {
+        unsafe {
+            device.free_memory(self.memory, None);
+            device.destroy_buffer(self.buffer, None);
+        }
+    }
+
+    pub fn buffer(&self) -> vk::Buffer {
+        self.buffer
+    }
+
+    pub fn memory(&self) -> vk::DeviceMemory {
+        self.memory
+    }
+
+    fn new_buffer(instance: &ash::Instance, device: &Device, memory_flags: vk::MemoryPropertyFlags, size: u64) -> (vk::Buffer, vk::DeviceMemory) {
         let buffer = unsafe {
             let usage_flags = vk::BufferUsageFlags::STORAGE_BUFFER | vk::BufferUsageFlags::TRANSFER_SRC | vk::BufferUsageFlags::TRANSFER_DST;
 
@@ -43,45 +102,9 @@ impl Buffer {
 
             device.allocate_memory(&allocate_info, None).expect("Failed to allocate memory")
         };
-        
-        unsafe {
-            device.bind_buffer_memory(buffer, memory, 0).expect("Failed to bind buffer memory");
 
-            if memory_flags == vk::MemoryPropertyFlags::DEVICE_LOCAL {
-                let buffer_info = vk::DescriptorBufferInfo::builder()
-                    .buffer(buffer)
-                    .offset(0)
-                    .range(size as vk::DeviceSize);
-    
-                let write_descriptor_set = vk::WriteDescriptorSet::builder()
-                    .dst_set(descriptor_set.set())
-                    .dst_binding(0)
-                    .dst_array_element(0)
-                    .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
-                    .buffer_info(slice::from_ref(&buffer_info));
-    
-                device.update_descriptor_sets(slice::from_ref(&write_descriptor_set), &[] as &[vk::CopyDescriptorSet])
-            }
-        }
+        unsafe { device.bind_buffer_memory(buffer, memory, 0).expect("Failed to bind buffer memory") };
 
-        Self { 
-            buffer, 
-            memory, 
-        }
-    }
-
-    pub fn destroy_buffer(&self, device: &Device) {
-        unsafe {
-            device.free_memory(self.memory, None);
-            device.destroy_buffer(self.buffer, None);
-        }
-    }
-
-    pub fn buffer(&self) -> vk::Buffer {
-        self.buffer
-    }
-
-    pub fn memory(&self) -> vk::DeviceMemory {
-        self.memory
+        (buffer, memory)
     }
 }

@@ -1,201 +1,203 @@
 #version 450
 #extension GL_GOOGLE_include_directive : enable
 
-#define FLT_MAX 3.402823466e+38
-#define MODEL_SIZE 4
+#include "octree.glsl"
+#include "camera.glsl"
+#include "ray.glsl"
 
-struct Camera {
-    vec3 origin;
-    vec3 lower_left_corner;
-    vec3 horizontal;
-    vec3 vertical;
-};
+#define STACK_SIZE 23
+#define EPS 1.1920929e-7 // 2^(-23)
 
-struct Ray {
-    vec3 origin;
-    vec3 direction;
-};
-
-struct BoundingBox {
-    vec3 min_bound;
-    vec3 max_bound;
-};
-
-struct Model {
-    BoundingBox bounding_box;
-    uint voxels[MODEL_SIZE * MODEL_SIZE * MODEL_SIZE];
-};
-
-layout (binding = 0) buffer SceneBuffer {
-    Model model;
+layout (binding = 0) buffer StorageBuffer {
+    Octree octree;
 };
 
 layout(push_constant) uniform PushConstants {
     Camera camera;
 };
 
-layout (local_size_x = 16, local_size_y = 16) in;
 layout (binding = 1, rgba8) uniform writeonly image2D raytrace_output_image;
 
-Ray create_ray(float u, float v) {
-    Ray ray = Ray(
-        camera.origin, 
-        //vec3(-0.7363797, 1.0, -0.41421357) + u * vec3(1.4727594, 0, 0) + (1.0 - v) * vec3(0.0, 0.0, 0.82842714) - vec3(0.0, 0.0, 0.0) // values read on CPU side of things
-        camera.lower_left_corner + u * camera.horizontal + (1.0 - v) * camera.vertical - camera.origin
-    );
+layout (local_size_x = 16, local_size_y = 16) in;
 
-    return ray;
-}
+struct StackItem {
+	uint node;
+	float t_max;
+} stack[STACK_SIZE];
 
-vec3 ray_at(Ray ray, float t) {
-    return ray.origin + (ray.direction * t);
-}
+vec3 octree_raymarch_coarse(vec3 o, vec3 d) {
+    // Octree resides at coordinates [8, 16] ([1, 2] * 8)
+    float size = 8.0;
+    float double_size = size * 2.0;
+    float mid_point = (size + double_size) * 0.5;
+    float mirror = size + double_size;
 
-uint location2index(vec3 location) {
-    return uint(location.x  + location.y * MODEL_SIZE + location.z * MODEL_SIZE * MODEL_SIZE);
-}
+    // Get rid of small ray direction components to avoid division by zero
+    d.x = abs(d.x) > EPS ? d.x : (d.x >= 0 ? EPS : -EPS);
+	d.y = abs(d.y) > EPS ? d.y : (d.y >= 0 ? EPS : -EPS);
+	d.z = abs(d.z) > EPS ? d.z : (d.z >= 0 ? EPS : -EPS);
 
-vec3 get_color(uint r, uint g, uint b) {
-    // RGB_UINT to BGR_UNORM
-    return vec3(b, g, r) / 255.0;
-}
+    // Precompute the coefficients of tx(x), ty(y), and tz(z)
+    vec3 t_coef = 1.0 / -abs(d);
+	vec3 t_bias = t_coef * o;
 
-vec3 hit(Ray ray, float t_min, float t_max) {
-    int face_index = 0;
+    // Select octant mask to mirror the coordinate system so
+    // that ray direction is negative along each axis.
+    uint oct_mask = 0;
 
-    for(int i = 0; i < 3; ++i) {
-        //vec3 min_bound = vec3(-2.0, 8.0, -2.0);
-        //vec3 max_bound = min_bound + MODEL_SIZE;
+    if (d.x > 0.0)
+		oct_mask ^= 1, t_bias.x = mirror * t_coef.x - t_bias.x;
+	if (d.y > 0.0)
+		oct_mask ^= 2, t_bias.y = mirror * t_coef.y - t_bias.y;
+	if (d.z > 0.0)
+		oct_mask ^= 4, t_bias.z = mirror * t_coef.z - t_bias.z;
+    
+    // Initialize the active span of t-values.
+	float t_min = max(max(double_size * t_coef.x - t_bias.x, double_size * t_coef.y - t_bias.y), double_size * t_coef.z - t_bias.z);
+	float t_max = min(min(size * t_coef.x - t_bias.x, size * t_coef.y - t_bias.y), size * t_coef.z - t_bias.z);
+    // Negative t_min means we start inside the root I think
+    t_min = max(t_min, 0.0);
+    float h = t_max;
 
-        float temp0 = (model.bounding_box.min_bound[i] - ray.origin[i]) / ray.direction[i];
-        float temp1 = (model.bounding_box.max_bound[i] - ray.origin[i]) / ray.direction[i];
+    // If the ray missed the root
+    if (t_min > t_max)  
+        return vec3(32.0, 32.0, 32.0);
 
-        float t0 = 0;
-        float t1 = 0;
+    // Root is located at the last location in StorageBuffer
+    uint parent = octree.descriptors[MEMORY_SIZE - 1];
+    // Cached child descriptor
+    uint descriptor = 0;
+    vec3 pos = vec3(size);
+    uint idx = 0;
 
-        if (temp0 < temp1) {
-            t0 = temp0;
-            t1 = temp1;
-        } else {
-            t0 = temp1;
-            t1 = temp0;
+    if (mid_point * t_coef.x - t_bias.x > t_min)
+		idx ^= 1, pos.x = mid_point;
+	if (mid_point * t_coef.y - t_bias.y > t_min)
+		idx ^= 2, pos.y = mid_point;
+	if (mid_point * t_coef.z - t_bias.z > t_min)
+		idx ^= 4, pos.z = mid_point;
+
+    uint scale = STACK_SIZE - 1;
+    float scale_exp2 = 0.5 * size;
+
+    while (scale < STACK_SIZE) {
+        if (descriptor == 0)
+            descriptor = octree.descriptors[((parent >> 8) + (idx ^ oct_mask))];
+
+        // Determine maximum t-value of the cube by evaluating tx(), ty(), and tz() at its corner
+        vec3 t_corner = pos * t_coef - t_bias;
+        float tc_max = min(min(t_corner.x, t_corner.y), t_corner.z);
+
+        if ((parent & 1 << (idx ^ oct_mask)) != 0 && t_min <= t_max) {
+            // INTERSECT
+            float tv_max = min(t_max, tc_max);
+            float half_scale_exp2 = scale_exp2 * 0.5;
+            // Intersect active t-span with the cube and evaluate tx(), ty(), and tz() at the center of the voxel
+            vec3 t_center = half_scale_exp2 * t_coef + t_corner;
+
+            if (t_min <= tv_max) {
+                // If ray has hit a leaf child
+                if (scale == 20) {
+                    // Determine which side is hit
+                    vec3 t_opp_corner = scale_exp2 * t_coef + t_corner;
+
+                    if (t_opp_corner.y > t_opp_corner.x && t_opp_corner.y > t_opp_corner.z)
+                        return vec3(43.0, 191.0, 191.0); // Darker blue for y-side
+                    else if (t_opp_corner.x > t_opp_corner.z)
+                        return vec3(36.0, 178.0, 178.0); // Even more darker blue x-side
+                    else
+                        return vec3(51.0, 255.0, 255.0); // Blue
+                }
+
+                // PUSH
+                if (tc_max < h)
+                    stack[scale] = StackItem(parent, t_max);
+
+                h = tc_max;
+                parent = descriptor;
+
+                // Select child voxel that the ray enters first
+                idx = 0;
+                scale -= 1;
+                scale_exp2 = half_scale_exp2;
+
+                if (t_center.x > t_min)
+    				idx ^= 1, pos.x += scale_exp2;
+    			if (t_center.y > t_min)
+    				idx ^= 2, pos.y += scale_exp2;
+    			if (t_center.z > t_min)
+    				idx ^= 4, pos.z += scale_exp2;
+
+                descriptor = 0;
+                t_max = tv_max;
+
+                continue;
+            }
         }
 
-        if (t_min < t0) {
-            t_min = t0;
-            face_index = i;
-        }
+        // ADVANCE
+        uint step_mask = 0;
 
-        t_max = min(t1, t_max);
+		if (t_corner.x <= tc_max)
+			step_mask ^= 1, pos.x -= scale_exp2;
+		if (t_corner.y <= tc_max)
+			step_mask ^= 2, pos.y -= scale_exp2;
+		if (t_corner.z <= tc_max)
+			step_mask ^= 4, pos.z -= scale_exp2;
 
-        if (t_max <= t_min) {
-            // If the ray doesn't hit the box then the last vector component (face index) will be negative
-            return vec3(0.0, 0.0, -1.0);
-        }
+        // Update active t-span and flip bits of the child slot index
+        t_min = tc_max;
+        idx ^= step_mask;
+
+        // If the ray exists the octree without hitting a leaf voxel
+        if (pos.x < 8.0 || pos.y < 8.0 || pos.z < 8.0)
+            return vec3(96.0, 96.0, 96.0);
+
+        // Proceed with pop if the bit flips disagree with the ray direction
+        if ((idx & step_mask) != 0) {
+            // POP
+			// Find the highest differing bit between two positions
+            uint differing_bits = 0;
+
+			if ((step_mask & 1) != 0)
+				differing_bits |= floatBitsToUint(pos.x) ^ floatBitsToUint(pos.x + scale_exp2);
+			if ((step_mask & 2) != 0)
+				differing_bits |= floatBitsToUint(pos.y) ^ floatBitsToUint(pos.y + scale_exp2);
+			if ((step_mask & 4) != 0)
+				differing_bits |= floatBitsToUint(pos.z) ^ floatBitsToUint(pos.z + scale_exp2);
+
+            // Find MSB
+            scale = findMSB(differing_bits);
+            scale_exp2 = uintBitsToFloat((scale - STACK_SIZE + 127) << 23) * size; // exp2f(scale - s_max) * size
+
+            // Restore parent voxel from the stack
+            parent = stack[scale].node;
+			t_max = stack[scale].t_max;
+
+            // Round cube position and extract child slot index
+            uint shx = floatBitsToUint(pos.x) >> scale;
+			uint shy = floatBitsToUint(pos.y) >> scale;
+			uint shz = floatBitsToUint(pos.z) >> scale;
+			pos.x = uintBitsToFloat(shx << scale);
+			pos.y = uintBitsToFloat(shy << scale);
+			pos.z = uintBitsToFloat(shz << scale);
+
+            idx = (shx & 1) | ((shy & 1) << 1) | ((shz & 1) << 2);
+
+            // Prevent same parent from being stored again and invalidate cached child descriptor
+            h = 0.0;
+			descriptor = 0;
+        } 
     }
-
-    return vec3(t_min, t_max, face_index);
+    return vec3(32.0, 32.0, 32.0);
 }
 
-vec3 traverse(Ray ray, vec3 hit) {
-    vec3 ray_start = ray_at(ray, hit.x);
-    vec3 ray_end = ray_at(ray, hit.y);
-
-    // Even though components of these vectors are always integers I made them float vectors to avoid multiple type conversions
-    vec3 current_location = vec3(0);
-    vec3 end_location = vec3(0);
-
-    for(int i = 0; i < 3; ++i) {
-        current_location[i] = min(MODEL_SIZE, max(1.0, ceil(ray_start[i] - model.bounding_box.min_bound[i])));
-        end_location[i] = min(MODEL_SIZE, max(1.0, ceil(ray_end[i] - model.bounding_box.min_bound[i])));
-    }
-
-    vec3 step = vec3(0);
-    vec3 t_delta = vec3(0);
-    vec3 t_max = vec3(0);
-
-    float t_min = hit.x;
-
-    for(int i = 0; i < 3; ++i) {
-        if (ray.direction[i] > 0.0) {
-            step[i] = 1.0;
-            t_delta[i] = 1.0 / ray.direction[i];
-            t_max[i] = t_min + (model.bounding_box.min_bound[i] + current_location[i] - ray_start[i]) / ray.direction[i];
-        } else if (ray.direction[i] < 0.0) {
-            step[i] = -1.0;
-            t_delta[i] = 1.0 / -ray.direction[i];
-            t_max[i] = t_min + (model.bounding_box.min_bound[i] + (current_location[i] - 1.0) - ray_start[i]) / ray.direction[i];
-        } else {
-            step[i] = 0.0;
-            t_delta[i] = FLT_MAX;
-            t_max[i] = FLT_MAX;
-        }
-    }
-
-    float face_index = hit.z;
-
-    vec3 voxel_color = get_color(153, 204, 255);
-    vec3 background_color = get_color(38, 38, 38);
-
-    while(true) {
-        uint index = location2index(current_location - 1);
-
-        if (model.voxels[index] != 0) {
-            // different faces of a voxel have different brightness levels
-            // the levels range from 0.8 to 1.0
-            // if for example, face_index is 1 then the brightness is going to be 0.9 [(1 + 8) / 10 = 0.9]
-            float brightness = (face_index + 8.0) / 10.0;
-            
-            return voxel_color * brightness;
-        }
-
-        if (current_location == end_location) {
-            return background_color;
-        }
-
-        if (t_max.x < t_max.y && t_max.x < t_max.z) {
-            // X-axis traversal.
-            current_location.x = current_location.x + step.x;
-            t_max.x = t_max.x + t_delta.x;
-            face_index = 0.0;
-
-        } else if (t_max.y < t_max.z) {
-            // Y-axis traversal.
-            current_location.y = current_location.y + step.y;
-            t_max.y = t_max.y + t_delta.y;
-            face_index = 1.0;
-
-        } else {
-            // Z-axis traversal.
-            current_location.z = current_location.z + step.z;
-            t_max.z = t_max.z + t_delta.z;
-            face_index = 2.0;
-        }
-    }
-}
 
 void main() {
     vec2 uv = vec2(gl_GlobalInvocationID.xy) / imageSize(raytrace_output_image);
-    Ray ray = create_ray(uv.x, uv.y);
+    Ray ray = create_ray(camera, uv.x, uv.y);
 
-    //vec3 unit_direction = normalize(ray.direction);
-    //float t = 0.5 *(unit_direction.z + 1.0);
-    //vec3 final_color = (1.0 - t) * vec3(1.0, 1.0, 1.0) + t * vec3(1.0, 0.7, 0.5); 
-
-    vec3 final_color = vec3(0.0, 0.0, 0.0);
-
-    float t_min = 0.0;
-    float t_max = 100.0;
-
-    // First check if the ray hits model's hitbox
-    vec3 hit = hit(ray, t_min, t_max); 
-
-    if (hit.z != -1) {
-        //final_color = get_color(153, 204, 255);
-
-        final_color = traverse(ray, hit);
-    }
+    vec3 color = octree_raymarch_coarse(ray.origin, ray.direction) / 255.0;
     
-
-    imageStore(raytrace_output_image, ivec2(gl_GlobalInvocationID.xy), vec4(final_color, 0.0));
+    imageStore(raytrace_output_image, ivec2(gl_GlobalInvocationID.xy), vec4(vec3(color.z, color.y, color.x), 0.0));
 }

@@ -10,17 +10,14 @@ mod buffer;
 mod image;
 mod semaphore;
 
-mod buffer_contents;
-use buffer_contents::*;
-
-mod push_constants;
-use push_constants::*;
-
 use nalgebra::Vector3;
-
 use std::{
     mem::size_of, 
     ptr::copy_nonoverlapping as memcpy,
+};
+use super::{
+    octree::Octree, 
+    camera::Camera
 };
 
 use ash::vk;
@@ -93,7 +90,7 @@ impl App {
         let command_buffer = CommandBuffer::new(&device);
         let descriptor_set = DescriptorSet::new(&device);
         let pipeline = Pipeline::new(&device, &descriptor_set, include_bytes!("../shaders/spv/raytrace.spv"), 64);
-        let world_buffer = Buffer::new(&instance, &device, &descriptor_set, vk::MemoryPropertyFlags::DEVICE_LOCAL, size_of::<Scene>() as u64);
+        let world_buffer = Buffer::new_local(&instance, &device, &descriptor_set, size_of::<super::Octree>() as u64);
         let raytrace_output_image = Image::new(&instance, &window, &device, &descriptor_set);
 
         Self {
@@ -113,40 +110,26 @@ impl App {
         }
     }
 
-    fn prepare(&self) {
-        // Load voxels to staging buffer
-        let voxels = vec![
-            (Vector3::new(0, 0, 0), 1),
-            (Vector3::new(3, 0, 0), 1),
-            (Vector3::new(0, 3, 0), 1),
-            (Vector3::new(3, 3, 0), 1),
-        ];
-
-        let scene = Scene {
-            model: Model::new(Vector3::new(-2.0, 8.0, -2.0), voxels),
-        };
-
-        let staging_buffer = Buffer::new(
+    pub fn prepare(&self, octree: Octree) {
+        let staging_buffer = Buffer::new_staging(
             &self.instance, 
             &self.device, 
-            &self.descriptor_set, 
-            vk::MemoryPropertyFlags::HOST_COHERENT | vk::MemoryPropertyFlags::HOST_VISIBLE, 
-            size_of::<Scene>() as u64,
+            size_of::<super::Octree>() as u64,
         );
 
-        let bytes = unsafe { std::slice::from_raw_parts((&scene as *const Scene) as *const u8, size_of::<Scene>()) };
+        let bytes = unsafe { std::slice::from_raw_parts((&octree as *const Octree) as *const u8, size_of::<Octree>()) };
         
         let memory = unsafe {
             self.device.map_memory(
                 staging_buffer.memory(), 
                 0, 
-                size_of::<Scene>() as u64, 
+                size_of::<Octree>() as u64, 
                 vk::MemoryMapFlags::empty()
             ).unwrap()
         };
 
         unsafe { 
-            memcpy(bytes.as_ptr(), memory.cast(), size_of::<Scene>());
+            memcpy(bytes.as_ptr(), memory.cast(), size_of::<Octree>());
             self.device.unmap_memory(staging_buffer.memory());
         };
 
@@ -176,22 +159,21 @@ impl App {
             &self.device, 
             staging_buffer.buffer(), 
             self.world_buffer.buffer(), 
-            size_of::<Scene>() as u64
+            size_of::<Octree>() as u64
         );
 
         self.command_buffer.end(&self.device);
         self.command_buffer.submit_single_time(&self.device);
 
         staging_buffer.destroy_buffer(&self.device);
-
     }
 
     fn render(&mut self) {
         let image_index = unsafe { self.swapchain.acquire_next_image(self.semaphore.image_available()).unwrap().0 };
 
         let camera = Camera::new(
-            Vector3::new(-10.0, 0.0, 10.0), // look_from
-            Vector3::new(0.0, 10.0, 0.0),   // look_at
+            Vector3::new(12.0, 0.0, 11.0),  // look_from
+            Vector3::new(12.0, 12.0, 9.0),  // look_at
             Vector3::new(0.0, 0.0, 1.0),    // vector_up
             45.0,                           // field_of_view
             16.0 / 9.0,                     // aspect_ratio
@@ -229,13 +211,30 @@ impl App {
         self.swapchain.present_frame(&self.device, image_index, self.semaphore.render_complete());
     }
 
+    fn quit(&self, control_flow: &mut ControlFlow) {
+        unsafe { self.device.device_wait_idle().unwrap() };
+        *control_flow = ControlFlow::Exit;
+    }
+
     pub fn run(mut self) {
-        self.prepare();
         let event_loop = self.event_loop.take().unwrap();
         event_loop.run(move |event, _, control_flow| {
             *control_flow = ControlFlow::Poll;
             match event {
                 Event::MainEventsCleared => self.render(),
+                Event::WindowEvent {
+                    event:
+                        WindowEvent::KeyboardInput {
+                            input:
+                            KeyboardInput {
+                                state: ElementState::Pressed,
+                                virtual_keycode: Some(VirtualKeyCode::W),
+                                ..
+                            },
+                            ..
+                        },
+                    ..
+                } => println!("W pressed"),
                 Event::WindowEvent {
                     event:
                         WindowEvent::CloseRequested
@@ -249,7 +248,7 @@ impl App {
                             ..
                         },
                     ..
-                } => *control_flow = ControlFlow::Exit,
+                } => self.quit(control_flow),
                 _ => (),
             }
         });

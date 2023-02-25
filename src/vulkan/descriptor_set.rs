@@ -27,7 +27,7 @@ impl DescriptorSet {
             ];
 
             let create_info = vk::DescriptorPoolCreateInfo::builder()
-                .flags(vk::DescriptorPoolCreateFlags::FREE_DESCRIPTOR_SET | vk::DescriptorPoolCreateFlags::UPDATE_AFTER_BIND)
+                .flags(vk::DescriptorPoolCreateFlags::UPDATE_AFTER_BIND)
                 .pool_sizes(pool_sizes)
                 .max_sets(1);
 
