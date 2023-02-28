@@ -15,9 +15,13 @@ use std::{
     mem::size_of, 
     ptr::copy_nonoverlapping as memcpy,
 };
+
 use super::{
-    octree::Octree, 
-    camera::Camera
+    octree::Octree,
+    camera::{
+        Camera, 
+        CameraProjection
+    },
 };
 
 use ash::vk;
@@ -49,7 +53,7 @@ use self::{
     descriptor_set::DescriptorSet,
     buffer::Buffer,
     image::Image, 
-    pipeline::Pipeline, 
+    pipeline::Pipeline,
 };
 
 #[allow(dead_code)]
@@ -168,22 +172,14 @@ impl App {
         staging_buffer.destroy_buffer(&self.device);
     }
 
-    fn render(&mut self) {
+    fn render(&mut self, camera: &CameraProjection) {
         let image_index = unsafe { self.swapchain.acquire_next_image(self.semaphore.image_available()).unwrap().0 };
-
-        let camera = Camera::new(
-            Vector3::new(12.0, 0.0, 11.0),  // look_from
-            Vector3::new(12.0, 12.0, 9.0),  // look_at
-            Vector3::new(0.0, 0.0, 1.0),    // vector_up
-            45.0,                           // field_of_view
-            16.0 / 9.0,                     // aspect_ratio
-        );
 
         self.command_buffer.begin(&self.device);
         self.command_buffer.bind_descriptor_sets(&self.device, &self.pipeline, &self.descriptor_set);
         self.command_buffer.bind_pipeline(&self.device, &self.pipeline);
 
-        self.command_buffer.push_constants(&self.device, &camera, &self.pipeline);
+        self.command_buffer.push_constants(&self.device, camera, &self.pipeline);
         self.command_buffer.dispatch(&self.device, self.window.inner_size().width / 16, self.window.inner_size().height / 16, 1);
         self.command_buffer.pipeline_barrier(
             &self.device, 
@@ -217,39 +213,39 @@ impl App {
     }
 
     pub fn run(mut self) {
+        let mut camera = Camera::new(
+            Vector3::new(12.0, 0.0, 11.0), // Look from
+            Vector3::new(12.0, 12.0, 9.0)  // Look at
+        );
+
         let event_loop = self.event_loop.take().unwrap();
         event_loop.run(move |event, _, control_flow| {
             *control_flow = ControlFlow::Poll;
             match event {
-                Event::MainEventsCleared => self.render(),
+                Event::MainEventsCleared => self.render(&camera.projection()),
                 Event::WindowEvent {
-                    event:
-                        WindowEvent::KeyboardInput {
-                            input:
-                            KeyboardInput {
-                                state: ElementState::Pressed,
-                                virtual_keycode: Some(VirtualKeyCode::W),
-                                ..
-                            },
+                    event, 
+                    ..
+                } => match event {
+                    WindowEvent::CloseRequested => self.quit(control_flow),
+                    WindowEvent::CursorMoved {
+                        position,
+                        ..
+                    } => println!("X: {}, Y: {}", position.x, position.y),
+                    WindowEvent::KeyboardInput  {
+                        input: KeyboardInput {
+                            virtual_keycode: Some(key),
+                            state,
                             ..
                         },
-                    ..
-                } => println!("W pressed"),
-                Event::WindowEvent {
-                    event:
-                        WindowEvent::CloseRequested
-                        | WindowEvent::KeyboardInput {
-                            input:
-                            KeyboardInput {
-                                state: ElementState::Pressed,
-                                virtual_keycode: Some(VirtualKeyCode::Escape),
-                                ..
-                            },
-                            ..
-                        },
-                    ..
-                } => self.quit(control_flow),
-                _ => (),
+                        ..
+                    } => match (key, state) {
+                        (VirtualKeyCode::Escape, ElementState::Pressed) => self.render(&camera.projection()),
+                        (key, state) => camera.process_keyboard(key, state),
+                    },
+                    _ => (),
+                },
+                _ => ()
             }
         });
     }

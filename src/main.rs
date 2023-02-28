@@ -1,5 +1,5 @@
-mod camera;
 mod octree;
+mod camera;
 mod vulkan;
 
 use nalgebra::Vector3;
