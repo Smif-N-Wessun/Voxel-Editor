@@ -1,11 +1,11 @@
 use ash::{ 
     vk,
-    extensions::khr, 
-    prelude::VkResult, 
+    extensions::khr,
 };
 use super::{
     Device,
-    Surface,
+    Surface, 
+    Semaphores,
 };
 use std::slice;
 
@@ -16,6 +16,7 @@ pub struct Swapchain {
     loader: khr::Swapchain,
     present_images: Vec<vk::Image>,
     present_image_views: Vec<vk::ImageView>,
+    image_index: usize,
 }
 
 impl Swapchain {
@@ -55,7 +56,6 @@ impl Swapchain {
 
             loader.create_swapchain(&create_info, None).expect("Swapchain creation error") 
         };
-
         let present_images = unsafe { loader.get_swapchain_images(swapchain).unwrap() };
 
         let present_image_views = unsafe {
@@ -94,6 +94,7 @@ impl Swapchain {
             loader, 
             present_images, 
             present_image_views,
+            image_index: 0,
         }
     }
 
@@ -103,9 +104,22 @@ impl Swapchain {
             self.loader.destroy_swapchain(self.swapchain, None) 
         }
     }
+    
+    pub fn acquire_next_image(&mut self, semaphores: &Semaphores) -> (vk::Image, usize) {
+        let semaphore = semaphores[self.image_index].image_available();
 
-    pub unsafe fn acquire_next_image(&self, semaphore: vk::Semaphore) -> VkResult<(u32, bool)> {
-        self.loader.acquire_next_image(self.swapchain, u64::max_value(), semaphore, vk::Fence::null())
+        let image_index = unsafe { 
+            self.loader.acquire_next_image(
+                self.swapchain, 
+                u64::max_value(), 
+                semaphore, 
+                vk::Fence::null()
+            ).unwrap().0 as usize
+        };
+
+        self.image_index = (image_index + 1) % self.present_images.len();
+
+        (self.present_images[image_index], image_index)
     }
 
     pub fn present_frame(&self, device: &Device, image_index: u32, semaphore: vk::Semaphore) {

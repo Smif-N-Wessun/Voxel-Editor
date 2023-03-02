@@ -16,12 +16,25 @@ pub struct CameraProjection {
     vertical: Vector4<f32>,
 }
 
+pub struct CameraController {
+    delta_move: Vector3<f32>,
+}
+
+impl Default for CameraController {
+    fn default() -> Self {
+        Self { 
+            delta_move: Default::default(), 
+        }
+    }
+}
+
 pub struct Camera {
     look_from: Vector3<f32>, 
     look_at: Vector3<f32>, 
     vector_up: Vector3<f32>, 
     field_of_view: f32, 
-    aspect_ratio: f32
+    aspect_ratio: f32,
+    controller: CameraController,
 }
 
 impl Camera {
@@ -32,10 +45,13 @@ impl Camera {
             vector_up: Vector3::new(0.0, 0.0, 1.0), 
             field_of_view: 45.0, 
             aspect_ratio: 16.0 / 9.0, 
+            controller: CameraController::default(),
         }
     }
 
-    pub fn projection(&self) -> CameraProjection {
+    pub fn projection(&mut self) -> CameraProjection {
+        self.look_from += self.controller.delta_move;
+
         let theta = self.field_of_view.to_radians();
         let h = (theta / 2.0).tan();
         let viewport_height = 2.0 * h;
@@ -59,22 +75,25 @@ impl Camera {
     }
 
     pub fn process_keyboard(&mut self, key: VirtualKeyCode, state: ElementState) {
-        if state == ElementState::Pressed {
-            match key {
-                VirtualKeyCode::W => {
-                    self.look_from.z += 0.25;
-                },
-                VirtualKeyCode::A => {
-                    self.look_from.x -= 0.25;
-                },
-                VirtualKeyCode::S => {
-                    self.look_from.z -= 0.25;
-                },
-                VirtualKeyCode::D => {
-                    self.look_from.x += 0.25;
-                },
-                _ => (),
-            }
-        } 
+        let delta = match state {
+            ElementState::Pressed => 0.01,
+            ElementState::Released => 0.0,
+        };
+
+        match key {
+            VirtualKeyCode::W => {
+                self.controller.delta_move.z = delta;
+            },
+            VirtualKeyCode::S => {
+                self.controller.delta_move.z = -delta;
+            },
+            VirtualKeyCode::D => {
+                self.controller.delta_move.x = delta;
+            },
+            VirtualKeyCode::A => {
+                self.controller.delta_move.x = -delta;
+            },
+            _ => (),
+        }
     }
 }
