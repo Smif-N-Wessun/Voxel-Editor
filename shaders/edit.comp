@@ -1,0 +1,89 @@
+#version 450
+#extension GL_GOOGLE_include_directive : enable
+
+#include "glsl/octree.glsl"
+#include "glsl/cursor.glsl"
+#include "glsl/mouse.glsl"
+
+#define STACK_SIZE 23
+
+layout (binding = 0) buffer WorldBuffer {
+    Octree octree;
+};
+
+layout (binding = 1) buffer CursorBuffer {
+    Cursor cursor;
+};
+
+layout(push_constant) uniform PushConstants {
+    Mouse mouse;
+};
+
+layout (local_size_x = 1) in;
+
+uint stack[STACK_SIZE + 1]; // Stores descriptor's valid masks
+
+void add_voxel(vec3 pos) {
+    uint free_address = 0;
+    uint lowest_scale = 20 + 1; // Lowest non-leaf voxel scale
+
+    // Find all ancestors of the voxel and record their valid masks
+    for (uint scale = lowest_scale; scale <= STACK_SIZE; ++scale) {
+        // Find cube position at current scale
+        uint shx = floatBitsToUint(pos.x) >> scale;
+		uint shy = floatBitsToUint(pos.y) >> scale;
+		uint shz = floatBitsToUint(pos.z) >> scale;
+		float prime_x = uintBitsToFloat(shx << scale);
+		float prime_y = uintBitsToFloat(shy << scale);
+		float prime_z = uintBitsToFloat(shz << scale);
+
+        // Find cube index
+        uint idx = 0;
+        
+        if (pos.x > prime_x)
+            idx |= 1;
+        if (pos.y > prime_y) 
+            idx |= 1 << 1;
+        if (pos.z > prime_z) 
+            idx |= 1 << 2;
+
+        pos.x = prime_x;
+        pos.y = prime_y;
+        pos.z = prime_z;
+
+        // Store descriptor's valid mask
+        stack[scale] = 1 << idx; 
+    }
+    // Find ancestors of the voxel in the octree and edit their valid masks
+    uint parent_valid_mask = stack[STACK_SIZE];
+    uint parent_child_pointer = 0;
+
+    // Root is located at the last address
+    octree.descriptors[MEMORY_SIZE - 1] |= parent_valid_mask;
+
+    for (uint scale = STACK_SIZE - 1; scale >= lowest_scale; --scale) {
+        uint child_address = parent_child_pointer + findMSB(parent_valid_mask);
+        uint valid_mask = stack[scale];
+        uint current_descriptor = octree.descriptors[child_address];
+
+        current_descriptor |= valid_mask;
+
+        // Create a child for current descriptor if it doesn't have one already
+        if (current_descriptor >> 8 == 0 && scale != lowest_scale) {
+            free_address += 8;
+            current_descriptor |= free_address << 8;
+        }
+
+        octree.descriptors[child_address] = current_descriptor;
+        parent_valid_mask = valid_mask;
+        parent_child_pointer = free_address;
+    }
+}
+
+void main() {
+    if (mouse.left_button)
+        add_voxel(vec3(15.0, 8.0, 8.0));
+
+}
+
+// https://www.youtube.com/watch?v=pfX6kkaSavU

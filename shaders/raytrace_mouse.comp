@@ -23,16 +23,14 @@ layout(push_constant) uniform PushConstants {
     Mouse mouse;
 };
 
-layout (binding = 2, rgba8) uniform writeonly image2D raytrace_output_image;
-
-layout (local_size_x = 16, local_size_y = 16) in;
+layout (local_size_x = 1) in;
 
 struct StackItem {
 	uint node;
 	float t_max;
 } stack[STACK_SIZE];
 
-vec3 octree_raymarch_coarse(vec3 o, vec3 d) {
+void octree_raymarch_coarse_cursor(vec3 o, vec3 d) {
     // Octree resides at coordinates [8, 16] ([1, 2] * 8)
     float lower_bound = 8.0;
     float upper_bound = lower_bound * 2.0;
@@ -67,8 +65,11 @@ vec3 octree_raymarch_coarse(vec3 o, vec3 d) {
     float h = t_max;
 
     // If the ray missed the root
-    if (t_min > t_max)  
-        return vec3(32.0, 32.0, 32.0);
+    if (t_min > t_max) {
+        // Side at index 3 doesn't exist so the cursor won't be shown
+        cursor.highlighted_side = 3; 
+        return;
+    }  
 
     // Root is located at the last location in WorldBuffer
     uint parent = octree.descriptors[MEMORY_SIZE - 1];
@@ -113,26 +114,22 @@ vec3 octree_raymarch_coarse(vec3 o, vec3 d) {
 	                if ((oct_mask & 4) != 0)
 	                	pos.z = ((upper_bound - 1.0) - pos.z) + lower_bound;
 
+                    cursor.pos = pos;
+
                     // Determine which side is hit
                     vec3 t_opp_corner = scale_exp2 * t_coef + t_corner;
-                    uint side_idx = 0;
-                    float brightness = 0.0;
 
-                    if (t_opp_corner.x > t_opp_corner.y && t_opp_corner.x > t_opp_corner.z) 
-                        side_idx = 0, brightness = 0.7; 
-                    else if (t_opp_corner.y > t_opp_corner.z) 
-                        side_idx = 1, brightness = 0.85; 
-                    else 
-                        side_idx = 2, brightness = 1.0;
+                    if (t_opp_corner.x > t_opp_corner.y && t_opp_corner.x > t_opp_corner.z) {
+                        cursor.highlighted_side = 0; 
+                    }
+                    else if (t_opp_corner.y > t_opp_corner.z) {
+                        cursor.highlighted_side = 1; 
+                    }
+                    else {
+                        cursor.highlighted_side = 2; 
+                    }
 
-                    // Has the ray hit the side which the cursor is pointing to ?
-                    if (side_idx == cursor.highlighted_side && pos == cursor.pos)
-                        if (mouse.left_button == true)
-                            return vec3(255.0, 255.0, 102.0);
-                        else  
-                            return vec3(199.0, 32.0, 32.0);
-                    else
-                        return vec3(51.0, 255.0, 255.0) * brightness;
+                    return;
                 }
 
                 // PUSH
@@ -176,8 +173,11 @@ vec3 octree_raymarch_coarse(vec3 o, vec3 d) {
         idx ^= step_mask;
 
         // If the ray exists the octree without hitting a leaf voxel
-        if (pos.x < 8.0 || pos.y < 8.0 || pos.z < 8.0)
-            return vec3(96.0, 96.0, 96.0);
+        if (pos.x < 8.0 || pos.y < 8.0 || pos.z < 8.0) {
+            // Side at index 3 doesn't exist so the cursor won't be shown
+            cursor.highlighted_side = 3; 
+            return;
+        }
 
         // Proceed with pop if the bit flips disagree with the ray direction
         if ((idx & step_mask) != 0) {
@@ -215,15 +215,10 @@ vec3 octree_raymarch_coarse(vec3 o, vec3 d) {
 			descriptor = 0;
         } 
     }
-    return vec3(32.0, 32.0, 32.0);
 }
 
-
 void main() {
-    vec2 uv = vec2(gl_GlobalInvocationID.xy) / imageSize(raytrace_output_image);
-    Ray ray = create_ray(camera, uv.x, uv.y);
+    Ray ray = create_ray(camera, mouse.coordinate.x, mouse.coordinate.y);
 
-    vec3 color = octree_raymarch_coarse(ray.origin, ray.direction) / 255.0;
-    
-    imageStore(raytrace_output_image, ivec2(gl_GlobalInvocationID.xy), vec4(vec3(color.z, color.y, color.x), 0.0));
+    octree_raymarch_coarse_cursor(ray.origin, ray.direction);
 }

@@ -13,7 +13,7 @@ pub struct Image {
 }
 
 impl Image {
-    pub fn new(instance: &ash::Instance, window: &Window, device: &Device, descriptor_set: &DescriptorSet) -> Self {
+    pub fn new(instance: &ash::Instance, window: &Window, device: &Device, descriptor_set: &DescriptorSet, binding: u32) -> Self {
         let image = unsafe {
             let usage = vk::ImageUsageFlags::STORAGE | vk::ImageUsageFlags::TRANSFER_SRC;
             let extent =  vk::Extent3D { 
@@ -86,7 +86,7 @@ impl Image {
     
             let write_descriptor_set = vk::WriteDescriptorSet::builder()
                 .dst_set(descriptor_set.set())
-                .dst_binding(1)
+                .dst_binding(binding)
                 .dst_array_element(0)
                 .descriptor_type(vk::DescriptorType::STORAGE_IMAGE)
                 .image_info(slice::from_ref(&image_info));

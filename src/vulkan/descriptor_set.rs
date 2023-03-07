@@ -15,6 +15,11 @@ impl DescriptorSet {
                 .ty(vk::DescriptorType::STORAGE_BUFFER)
                 .descriptor_count(1)
                 .build();
+
+            let cursor_buffer = vk::DescriptorPoolSize::builder()
+                .ty(vk::DescriptorType::STORAGE_BUFFER)
+                .descriptor_count(1)
+                .build();
         
             let raytrace_output_image = vk::DescriptorPoolSize::builder()
                 .ty(vk::DescriptorType::STORAGE_IMAGE)
@@ -22,8 +27,9 @@ impl DescriptorSet {
                 .build();
 
             let pool_sizes = &[
-                world_buffer, 
-                raytrace_output_image
+                world_buffer,
+                cursor_buffer, 
+                raytrace_output_image,
             ];
 
             let create_info = vk::DescriptorPoolCreateInfo::builder()
@@ -41,9 +47,16 @@ impl DescriptorSet {
                 .descriptor_count(1)
                 .stage_flags(vk::ShaderStageFlags::COMPUTE)
                 .build();
+
+            let cursor_buffer = vk::DescriptorSetLayoutBinding::builder()
+                .binding(1)
+                .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
+                .descriptor_count(1)
+                .stage_flags(vk::ShaderStageFlags::COMPUTE)
+                .build();
     
             let raytrace_output_image = vk::DescriptorSetLayoutBinding::builder()
-                .binding(1)
+                .binding(2)
                 .descriptor_type(vk::DescriptorType::STORAGE_IMAGE)
                 .descriptor_count(1)
                 .stage_flags(vk::ShaderStageFlags::COMPUTE)
@@ -51,6 +64,7 @@ impl DescriptorSet {
     
             let layout_bindings = &[
                 world_buffer,
+                cursor_buffer,
                 raytrace_output_image,
             ];
 

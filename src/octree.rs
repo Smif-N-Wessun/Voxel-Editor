@@ -7,7 +7,6 @@ const MEMORY_SIZE: usize = 1024;
 const STACK_SIZE: usize = 23;
 const ROOT_ADDRESS: usize = MEMORY_SIZE - 1;
 
-#[allow(dead_code)] // Not read in rust, only copied to GPU buffer
 #[repr(C)]
 pub struct Bounds {
     min: Vector4<f32>, // Even though min and max are 3 dimensional vectors they need to be Vector4
@@ -26,7 +25,6 @@ impl Bounds {
     }
 }
 
-#[allow(dead_code)]
 #[repr(C)]
 pub struct Octree {
     bounds: Bounds,
@@ -43,7 +41,7 @@ impl Octree {
             let lowest_scale = 20 + 1; // Lowest non-leaf voxel scale
         
             for mut pos in voxels {
-                // Find voxel's ancestors
+                // Find cube position at current scale
                 for scale in lowest_scale..=STACK_SIZE {
                     let shx = pos.x.to_bits() >> scale;
                     let shy = pos.y.to_bits() >> scale;
@@ -77,9 +75,9 @@ impl Octree {
                 descriptors[ROOT_ADDRESS] |= parent_valid_mask;
         
                 for scale in (lowest_scale..STACK_SIZE).rev() {
-                    let address = parent_child_pointer + (31 - parent_valid_mask.leading_zeros());
+                    let child_address = parent_child_pointer + (31 - parent_valid_mask.leading_zeros());
                     let valid_mask = stack[scale as usize];
-                    let mut current_descriptor = descriptors[address as usize];
+                    let mut current_descriptor = descriptors[child_address as usize];
         
                     current_descriptor |= valid_mask;
         
@@ -88,13 +86,14 @@ impl Octree {
                         current_descriptor |= free_address << 8;
                     }
         
-                    descriptors[address as usize] = current_descriptor;
+                    descriptors[child_address as usize] = current_descriptor;
                     parent_valid_mask = valid_mask;
                     parent_child_pointer = free_address;
                 }
             }
             descriptors
         };
+
 
         Self { 
             bounds: Bounds::new(location, size),

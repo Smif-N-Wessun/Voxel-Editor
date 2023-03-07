@@ -6,24 +6,25 @@ mod swapchain;
 mod command_buffers;
 mod descriptor_set;
 mod pipeline;
-mod buffer;
+mod buffers;
 mod image;
 mod semaphores;
 mod fences;
 
 use ash::vk;
-use nalgebra::Vector3;
-use std::{
-    mem::size_of, 
-    ptr::copy_nonoverlapping as memcpy,
+use nalgebra::{
+    Vector2, 
+    Vector3,
+    Vector4,
 };
+use std::mem::size_of;
 use winit::{
     event::{
         ElementState, 
         Event, 
         KeyboardInput, 
         VirtualKeyCode, 
-        WindowEvent 
+        WindowEvent, 
     },
     event_loop::{
         ControlFlow, 
@@ -32,15 +33,21 @@ use winit::{
     window::{ 
         Window, 
         WindowBuilder 
-    },
+    }, 
 };
-use super::{
-    octree::Octree,
-    camera::{
+use {
+    super::octree::Octree,
+    super::cursor::Cursor,
+    super::mouse::{
+        Mouse, 
+        MouseState
+    },
+    super::camera::{
         Camera, 
         CameraProjection
     },
 };
+
 use self::{
     debug_messenger::DebugMessenger,
     instance::InstanceTrait,
@@ -48,14 +55,20 @@ use self::{
     device::Device,
     swapchain::Swapchain,
     semaphores::Semaphores,
-    fences::{Fences, FenceCommands},
     descriptor_set::DescriptorSet,
-    buffer::Buffer,
+    buffers::{
+        LocalBuffer, 
+        StagingBuffer
+    },
     image::Image, 
     pipeline::Pipeline, 
     command_buffers::{
         CommandBuffers, 
-        Commands 
+        CommandBufferCommands 
+    },
+    fences::{
+        Fences, 
+        FenceCommands
     }, 
 };
 
@@ -71,8 +84,11 @@ pub struct App {
     fences: Fences,
     command_buffers: CommandBuffers,
     descriptor_set: DescriptorSet,
-    pipeline: Pipeline,
-    world_buffer: Buffer,
+    raytrace_pipeline: Pipeline,
+    mouse_raytrace_pipeline: Pipeline,
+    edit_pipeline: Pipeline,
+    world_buffer: LocalBuffer,
+    cursor_buffer: LocalBuffer,
     raytrace_output_image: Image,
 }
 
@@ -97,9 +113,27 @@ impl App {
         let fences = Fences::new(&device, &swapchain);
         let command_buffers = command_buffers::CommandBuffers::new(&device, &swapchain);
         let descriptor_set = DescriptorSet::new(&device);
-        let pipeline = Pipeline::new(&device, &descriptor_set, include_bytes!("../shaders/spv/raytrace.spv"), 64);
-        let world_buffer = Buffer::new_local(&instance, &device, &descriptor_set, size_of::<super::Octree>() as u64);
-        let raytrace_output_image = Image::new(&instance, &window, &device, &descriptor_set);
+        let raytrace_pipeline = Pipeline::new(
+            &device, 
+            &descriptor_set, 
+            include_bytes!("../shaders/spv/raytrace.spv"), 
+            (size_of::<CameraProjection>() + size_of::<MouseState>())  as u32
+        );
+        let mouse_raytrace_pipeline = Pipeline::new(
+            &device, 
+            &descriptor_set, 
+            include_bytes!("../shaders/spv/raytrace_mouse.spv"), 
+            (size_of::<CameraProjection>() + size_of::<MouseState>())  as u32
+        );
+        let edit_pipeline = Pipeline::new(
+            &device, 
+            &descriptor_set, 
+            include_bytes!("../shaders/spv/edit.spv"), 
+            size_of::<MouseState>()  as u32
+        );
+        let world_buffer = LocalBuffer::new(&instance, &device, &descriptor_set, size_of::<Octree>() as u64, 0);
+        let cursor_buffer = LocalBuffer::new(&instance, &device, &descriptor_set, size_of::<Cursor>() as u64, 1);
+        let raytrace_output_image = Image::new(&instance, &window, &device, &descriptor_set, 2);
 
         Self {
             event_loop: Some(event_loop),
@@ -113,37 +147,18 @@ impl App {
             fences,
             command_buffers,
             descriptor_set,
-            pipeline,
+            raytrace_pipeline,
+            mouse_raytrace_pipeline,
+            edit_pipeline,
             world_buffer,
+            cursor_buffer,
             raytrace_output_image,
         }
     }
 
-    pub fn prepare(&self, octree: Octree) {
-        let staging_buffer = Buffer::new_staging(
-            &self.instance, 
-            &self.device, 
-            size_of::<super::Octree>() as u64,
-        );
-
-        let bytes = unsafe { std::slice::from_raw_parts((&octree as *const Octree) as *const u8, size_of::<Octree>()) };
-        
-        let memory = unsafe {
-            self.device.map_memory(
-                staging_buffer.memory(), 
-                0, 
-                size_of::<Octree>() as u64, 
-                vk::MemoryMapFlags::empty()
-            ).unwrap()
-        };
-
-        unsafe { 
-            memcpy(bytes.as_ptr(), memory.cast(), size_of::<Octree>());
-            self.device.unmap_memory(staging_buffer.memory());
-        };
-
+    pub fn prepare(&self) {
         let command_buffer = self.command_buffers[0];
-
+        
         // Transition image layouts
         command_buffer.begin(&self.device);
 
@@ -166,37 +181,45 @@ impl App {
             (vk::PipelineStageFlags::TOP_OF_PIPE,  vk::PipelineStageFlags::TOP_OF_PIPE),
         );
 
-        command_buffer.copy_buffer(
-            &self.device, 
-            staging_buffer.buffer(), 
-            self.world_buffer.buffer(), 
-            size_of::<Octree>() as u64
-        );
-
         command_buffer.end(&self.device);
         command_buffer.submit_single_time(&self.device);
-
-        staging_buffer.destroy_buffer(&self.device);
     }
 
-    fn render(&mut self, camera: &CameraProjection) {
+    fn render(&mut self, camera: CameraProjection, mouse: MouseState) {
         let (present_image, image_index) = self.swapchain.acquire_next_image(&self.semaphores);
         let fence = self.fences[image_index];
         let semaphore = self.semaphores[image_index];
         let command_buffer = self.command_buffers[image_index];
-        
+        let push_constant = (camera, mouse);
+
+        if push_constant.1.left_button == ash::vk::TRUE {
+            println!("Click");
+        }
+
         fence.wait(&self.device);
         
         command_buffer.begin(&self.device);
-        command_buffer.bind_descriptor_sets(&self.device, &self.pipeline, &self.descriptor_set);
-        command_buffer.bind_pipeline(&self.device, &self.pipeline);
-        command_buffer.push_constants(&self.device, camera, &self.pipeline);
+        
+        command_buffer.bind_descriptor_sets(&self.device, &self.edit_pipeline, &self.descriptor_set);
+        command_buffer.bind_pipeline(&self.device, &self.edit_pipeline);
+        command_buffer.push_constants(&self.device, &push_constant.1, &self.edit_pipeline);
+        command_buffer.dispatch(&self.device, 1, 1, 1);
+
+        command_buffer.bind_descriptor_sets(&self.device, &self.mouse_raytrace_pipeline, &self.descriptor_set);
+        command_buffer.bind_pipeline(&self.device, &self.mouse_raytrace_pipeline);
+        command_buffer.push_constants(&self.device, &push_constant, &self.mouse_raytrace_pipeline);
+        command_buffer.dispatch(&self.device, 1, 1, 1);
+
+        command_buffer.bind_descriptor_sets(&self.device, &self.raytrace_pipeline, &self.descriptor_set);
+        command_buffer.bind_pipeline(&self.device, &self.raytrace_pipeline);
+        command_buffer.push_constants(&self.device, &push_constant, &self.raytrace_pipeline);
         command_buffer.dispatch(
             &self.device, 
             self.window.inner_size().width / 16,
             self.window.inner_size().height / 16, 
             1
         );
+
         command_buffer.pipeline_barrier(
             &self.device, 
             present_image, 
@@ -236,6 +259,7 @@ impl App {
     }
 
     pub fn run(mut self) {
+        let mut mouse = Mouse::default();
         let mut camera = Camera::new(
             Vector3::new(12.0, 0.0, 11.0), // Look from
             Vector3::new(12.0, 12.0, 9.0)  // Look at
@@ -245,16 +269,21 @@ impl App {
         event_loop.run(move |event, _, control_flow| {
             *control_flow = ControlFlow::Poll;
             match event {
-                Event::MainEventsCleared => self.render(&camera.projection()),
+                Event::MainEventsCleared => self.render(camera.projection(), mouse.state()),
                 Event::WindowEvent {
                     event, 
                     ..
                 } => match event {
                     WindowEvent::CloseRequested => *control_flow = ControlFlow::Exit,
+                    WindowEvent::MouseInput { 
+                        button,
+                        state,
+                        ..
+                    } => mouse.process_input(button, state),
                     WindowEvent::CursorMoved {
                         position,
                         ..
-                    } => println!("X: {}, Y: {}", position.x, position.y),
+                    } => mouse.process_movement(position, &self.window),
                     WindowEvent::KeyboardInput  {
                         input: KeyboardInput {
                             virtual_keycode: Some(key),
@@ -283,7 +312,10 @@ impl Drop for App {
             self.semaphores.destroy_semaphore(&self.device);
             self.raytrace_output_image.destroy_image(&self.device);
             self.world_buffer.destroy_buffer(&self.device);
-            self.pipeline.destroy_pipeline(&self.device);
+            self.cursor_buffer.destroy_buffer(&self.device);
+            self.raytrace_pipeline.destroy_pipeline(&self.device);
+            self.mouse_raytrace_pipeline.destroy_pipeline(&self.device);
+            self.edit_pipeline.destroy_pipeline(&self.device);
             self.descriptor_set.destroy_descriptor_set(&self.device);
             self.command_buffers.destroy_command_buffer(&self.device);
             self.swapchain.destroy_swapchain(&self.device);

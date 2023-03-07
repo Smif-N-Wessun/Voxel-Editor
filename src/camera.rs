@@ -7,11 +7,10 @@ use winit::event::{
     ElementState
 };
 
-#[allow(dead_code)]
 #[repr(C)]
 pub struct CameraProjection {
     origin: Vector4<f32>,
-    lower_left_corner: Vector4<f32>,
+    upper_left_corner: Vector4<f32>,
     horizontal: Vector4<f32>,
     vertical: Vector4<f32>,
 }
@@ -64,11 +63,11 @@ impl Camera {
         let origin = self.look_from.to_homogeneous();
         let horizontal = (viewport_width * u).to_homogeneous();
         let vertical = (viewport_height * v).to_homogeneous();
-        let lower_left_corner = origin - horizontal / 2.0 - vertical / 2.0 + w.to_homogeneous();
+        let upper_left_corner = origin - horizontal * 0.5 + vertical * 0.5 + w.to_homogeneous();
 
         CameraProjection {
             origin,
-            lower_left_corner,
+            upper_left_corner,
             horizontal,
             vertical,
         }

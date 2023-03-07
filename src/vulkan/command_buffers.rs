@@ -53,7 +53,7 @@ impl Index<usize> for CommandBuffers {
     }
 }
 
-pub trait Commands {
+pub trait CommandBufferCommands {
     fn begin(self, device: &Device);
     fn end(self, device: &Device);
     fn submit_commands(self, device: &Device, wait_semaphore: vk::Semaphore, signal_semaphore: vk::Semaphore, signal_fence: vk::Fence);
@@ -86,7 +86,7 @@ pub trait Commands {
     );
 }
 
-impl Commands for vk::CommandBuffer {
+impl CommandBufferCommands for vk::CommandBuffer {
     fn begin(self, device: &Device) {
         let begin_info = vk::CommandBufferBeginInfo::builder()
             .flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT);
