@@ -15,6 +15,10 @@ layout (binding = 1) buffer CursorBuffer {
     Cursor cursor;
 };
 
+layout (binding = 3) buffer DebugBuffer {
+    vec3 cursor_pos;
+};
+
 layout(push_constant) uniform PushConstants {
     Mouse mouse;
 };
@@ -24,7 +28,6 @@ layout (local_size_x = 1) in;
 uint stack[STACK_SIZE + 1]; // Stores descriptor's valid masks
 
 void add_voxel(vec3 pos) {
-    uint free_address = 0;
     uint lowest_scale = 20 + 1; // Lowest non-leaf voxel scale
 
     // Find all ancestors of the voxel and record their valid masks
@@ -70,20 +73,29 @@ void add_voxel(vec3 pos) {
 
         // Create a child for current descriptor if it doesn't have one already
         if (current_descriptor >> 8 == 0 && scale != lowest_scale) {
+            uint free_address = octree.free_address;
+
             free_address += 8;
             current_descriptor |= free_address << 8;
+
+            octree.free_address = free_address;
         }
 
         octree.descriptors[child_address] = current_descriptor;
         parent_valid_mask = valid_mask;
-        parent_child_pointer = free_address;
+        parent_child_pointer = current_descriptor >> 8;
     }
 }
 
 void main() {
-    if (mouse.left_button)
-        add_voxel(vec3(15.0, 8.0, 8.0));
+    if (mouse.left_button) {
+        vec3 pos = cursor.pos + cursor.normal;
 
+        if ((pos.x >= 8.0 && pos.x < 16.0) && (pos.y >= 8.0 && pos.y < 16.0) && (pos.z >= 8.0 && pos.z < 16.0))
+            add_voxel(pos);
+
+        cursor_pos = cursor.pos + cursor.normal;
+    }
 }
 
 // https://www.youtube.com/watch?v=pfX6kkaSavU

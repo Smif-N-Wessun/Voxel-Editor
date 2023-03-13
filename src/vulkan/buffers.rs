@@ -9,6 +9,104 @@ use super::{
     DescriptorSet,
 };
 
+pub struct DebugBuffer {
+    buffer: vk::Buffer,
+    memory: vk::DeviceMemory,
+}
+
+impl DebugBuffer {
+    pub fn new(instance: &ash::Instance, device: &Device, descriptor_set: &DescriptorSet, size: u64, binding: u32) -> Self {
+        let (buffer, memory) = new_buffer(
+            instance, 
+            device, 
+            vk::MemoryPropertyFlags::HOST_COHERENT | vk::MemoryPropertyFlags::HOST_VISIBLE, 
+            size
+        );
+
+        unsafe {
+            let buffer_info = vk::DescriptorBufferInfo::builder()
+                .buffer(buffer)
+                .offset(0)
+                .range(size as vk::DeviceSize);
+    
+            let write_descriptor_set = vk::WriteDescriptorSet::builder()
+                .dst_set(descriptor_set.set())
+                .dst_binding(binding)
+                .dst_array_element(0)
+                .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
+                .buffer_info(slice::from_ref(&buffer_info));
+    
+            device.update_descriptor_sets(slice::from_ref(&write_descriptor_set), &[] as &[vk::CopyDescriptorSet]);
+        }
+
+        Self { 
+            buffer, 
+            memory, 
+        }
+    }
+
+    pub fn destroy_buffer(&self, device: &Device) {
+        unsafe {
+            device.free_memory(self.memory, None);
+            device.destroy_buffer(self.buffer, None);
+        }
+    }
+
+    pub fn read_vector(&self, device: &Device) {
+        unsafe {
+            const SIZE: usize = 16; 
+
+            let mut bytes: [u8; SIZE] = [0; SIZE];
+
+            let memory = device.map_memory(
+                self.memory, 
+                0, 
+                SIZE as u64,
+                vk::MemoryMapFlags::empty()
+            ).unwrap();
+
+            memcpy(memory.cast(), bytes.as_mut_ptr(), SIZE);
+
+            device.unmap_memory(self.memory);
+
+            let (head, body, _tail) = bytes.align_to::<nalgebra::Vector4<f32>>();
+            assert!(head.is_empty(), "Data was not aligned");
+        
+            let vec4 = &body[0];
+        
+            println!("pos: ({}, {}, {})", vec4.x, vec4.y, vec4.z);
+        };
+    }
+
+    pub fn write<T: Sized>(&self, device: &Device, data: &T) {
+        unsafe {
+            let bytes = std::slice::from_raw_parts(
+                (data as *const T) as *const u8,
+                std::mem::size_of::<T>(),
+            );
+
+            let memory = device.map_memory(
+                self.memory, 
+                0, 
+                size_of::<T>() as u64, 
+                vk::MemoryMapFlags::empty()
+            ).unwrap();
+
+            memcpy(bytes.as_ptr(), memory.cast(), size_of::<T>());
+
+            device.unmap_memory(self.memory);
+        };
+    }
+
+    pub fn buffer(&self) -> vk::Buffer {
+        self.buffer
+    }
+
+    pub fn _memory(&self) -> vk::DeviceMemory {
+        self.memory
+    }
+}
+
 pub struct StagingBuffer {
     buffer: vk::Buffer,
     memory: vk::DeviceMemory,
@@ -96,8 +194,8 @@ impl LocalBuffer {
         }
 
         Self { 
-            buffer, 
-            memory, 
+            buffer,
+            memory,
         }
     }
 

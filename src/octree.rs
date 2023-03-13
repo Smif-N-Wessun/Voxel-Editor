@@ -3,9 +3,8 @@ use nalgebra::{
     Vector4
 };
 
-const MEMORY_SIZE: usize = 1024; 
+pub const MEMORY_SIZE: usize = 1024; 
 const STACK_SIZE: usize = 23;
-const ROOT_ADDRESS: usize = MEMORY_SIZE - 1;
 
 #[repr(C)]
 pub struct Bounds {
@@ -27,19 +26,20 @@ impl Bounds {
 
 #[repr(C)]
 pub struct Octree {
-    bounds: Bounds,
-    descriptors: [u32; 1024],
+    pub bounds: Bounds,
+    pub descriptors: [u32; MEMORY_SIZE],
+    pub free_address: u32,
 }
 
 impl Octree {
     pub fn new(location: Vector3<i32>, size: u32, voxels: Vec<Vector3<f32>>) -> Self {
-        let descriptors = {
+        let (descriptors, free_address)  = {
             let mut descriptors = [u32::default(); MEMORY_SIZE];
             let mut stack = [u32::default(); (STACK_SIZE + 1) as usize];
             let mut free_address = 0;
         
             let lowest_scale = 20 + 1; // Lowest non-leaf voxel scale
-        
+
             for mut pos in voxels {
                 // Find cube position at current scale
                 for scale in lowest_scale..=STACK_SIZE {
@@ -68,36 +68,37 @@ impl Octree {
         
                     stack[scale as usize] = 1 << idx;
                 }
+
                 // Put them into octree
                 let mut parent_valid_mask = stack[STACK_SIZE];
                 let mut parent_child_pointer = 0;
-        
-                descriptors[ROOT_ADDRESS] |= parent_valid_mask;
-        
+
+                descriptors[MEMORY_SIZE - 1] |= parent_valid_mask;
+
                 for scale in (lowest_scale..STACK_SIZE).rev() {
                     let child_address = parent_child_pointer + (31 - parent_valid_mask.leading_zeros());
-                    let valid_mask = stack[scale as usize];
                     let mut current_descriptor = descriptors[child_address as usize];
-        
+                    let valid_mask = stack[scale as usize];
+                    
                     current_descriptor |= valid_mask;
-        
+                    
                     if current_descriptor >> 8 == 0 && scale != lowest_scale {
                         free_address += 8;
                         current_descriptor |= free_address << 8;
                     }
-        
-                    descriptors[child_address as usize] = current_descriptor;
+                    
                     parent_valid_mask = valid_mask;
-                    parent_child_pointer = free_address;
+                    parent_child_pointer = current_descriptor >> 8;
+                    descriptors[child_address as usize] = current_descriptor;
                 }
             }
-            descriptors
+            (descriptors, free_address)
         };
-
 
         Self { 
             bounds: Bounds::new(location, size),
-            descriptors, 
+            descriptors,
+            free_address,
         }
     }
 }

@@ -1,0 +1,32 @@
+#version 450
+#extension GL_GOOGLE_include_directive : enable
+
+#include "glsl/octree.glsl"
+#include "glsl/cursor.glsl"
+#include "glsl/mouse.glsl"
+
+layout (binding = 0) buffer WorldBuffer {
+    Octree octree;
+};
+
+layout (binding = 1) buffer CursorBuffer {
+    Cursor cursor;
+};
+
+layout (binding = 3) buffer DebugBuffer {
+    vec3 out_vec;
+};
+
+layout(push_constant) uniform PushConstants {
+    vec4 placeholder;
+};
+
+layout (local_size_x = 1) in;
+
+void main() {
+    octree.bounds.upper = vec3(16.0);
+    octree.bounds.lower = vec3(8.0);
+    octree.free_address = 0;
+}
+
+// https://www.youtube.com/watch?v=pfX6kkaSavU

@@ -26,10 +26,16 @@ impl DescriptorSet {
                 .descriptor_count(1)
                 .build();
 
+            let debug_buffer = vk::DescriptorPoolSize::builder()
+                .ty(vk::DescriptorType::STORAGE_BUFFER)
+                .descriptor_count(1)
+                .build();
+
             let pool_sizes = &[
                 world_buffer,
                 cursor_buffer, 
                 raytrace_output_image,
+                debug_buffer,
             ];
 
             let create_info = vk::DescriptorPoolCreateInfo::builder()
@@ -61,11 +67,19 @@ impl DescriptorSet {
                 .descriptor_count(1)
                 .stage_flags(vk::ShaderStageFlags::COMPUTE)
                 .build();
+
+            let debug_buffer = vk::DescriptorSetLayoutBinding::builder()
+                .binding(3)
+                .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
+                .descriptor_count(1)
+                .stage_flags(vk::ShaderStageFlags::COMPUTE)
+                .build();
     
             let layout_bindings = &[
                 world_buffer,
                 cursor_buffer,
                 raytrace_output_image,
+                debug_buffer,
             ];
 
             let descriptor_binding_flags = {

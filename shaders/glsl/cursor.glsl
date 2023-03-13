@@ -3,7 +3,7 @@
 
 struct Cursor {
     vec3 pos;
-    uint highlighted_side;
+    ivec3 normal;
 };
 
 #endif

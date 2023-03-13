@@ -4,13 +4,14 @@
 #define MEMORY_SIZE 1024
 
 struct Bounds {
-    vec3 min;
-    vec3 max;
+    vec3 upper;
+    vec3 lower;
 };
 
 struct Octree {
-    Bounds bound;
-    uint descriptors[1024];
+    Bounds bounds;
+    uint descriptors[MEMORY_SIZE];
+    uint free_address;
 };
 
 #endif
